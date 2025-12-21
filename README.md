@@ -99,7 +99,7 @@ A huge thanks to the developers who made this project possible:
 
 <div align="center">
 
-| [**Abhi**](https://t.me/about_zani/143) | [**Abhinav**](https://t.me/adityaabhinav) | [**Bharat**](https://t.me/Bharath_boy) | [**Master**](https://t.me/V_Sbotmaker) |
+| [**ABHI**](https://t.me/about_zani/143) | [**Abhinav**](https://t.me/adityaabhinav) | [**Bharat**](https://t.me/Bharath_boy) | [**Master**](https://t.me/V_Sbotmaker) |
 | :---: | :---: | :---: | :---: |
 | Owner | Developer | Developer | Developer |
 
