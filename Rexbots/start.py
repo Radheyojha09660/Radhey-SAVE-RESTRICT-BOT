@@ -9,6 +9,7 @@ import asyncio
 import random
 import time
 import shutil
+import re
 import pyrogram
 from pyrogram import Client, filters, enums
 from pyrogram.errors import (
@@ -21,6 +22,22 @@ from database.db import db
 import math
 from Rexbots.strings import HELP_TXT, COMMANDS_TXT
 from logger import LOGGER
+
+def clean_caption(caption: str) -> str:
+    """Remove Telegram links and channel references from caption"""
+    if not caption:
+        return None
+    
+    # Remove Telegram t.me links
+    caption = re.sub(r'https?:\/\/t\.me\/\S*', '', caption)
+    # Remove t.me references without https
+    caption = re.sub(r't\.me\/\S*', '', caption)
+    # Remove channel references like @channelname
+    caption = re.sub(r'@\w+', '', caption)
+    # Clean up extra whitespace
+    caption = re.sub(r'\s+', ' ', caption).strip()
+    
+    return caption if caption else None
 
 def humanbytes(size):
     if not size:
@@ -68,20 +85,26 @@ LOADING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇",
 PULSE_FRAMES = ["▓", "▒", "░"]
 SPINNER_FRAMES = ["◐", "◓", "◑", "◒"]
 
-# Modern animated progress bar with complete details
+# Modern animated progress bar with complete details - Enhanced Version
 PROGRESS_BAR_DASHBOARD = """\
 ╔══════════════════════════════════════════╗
-║  {spinner}  {status} Progress Dashboard   ║
+║  {spinner}  📊 {status}              ║
 ╠══════════════════════════════════════════╣
-║  {bar}                                   ║
-║  ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░  {percentage:.1f}%          ║
+║  {bar}                           ║
+║  ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░  {percentage:>5.1f}%     ║
 ╠══════════════════════════════════════════╣
-║  📁 Size:     {current} / {total}              ║
-║  ⚡ Speed:    {speed}/s                      ║
-║  ⏱️ ETA:      {eta}                        ║
-║  ⏰ Elapsed:  {elapsed}                     ║
-║  📶 Progress: {progress}                     ║
+║  📁 Size:    {current:>10} / {total:<10} ║
+║  ⚡ Speed:   {speed:>10}/s            ║
+║  ⏱️ ETA:     {eta:<15}         ║
+║  ⏰ Elapsed: {elapsed:<15}         ║
+║  📶 Progress:{progress:>15}      ║
 ╚══════════════════════════════════════════╝
+Task ID: {task_id}
+"""
+
+# Compact progress bar for inline updates
+COMPACT_PROGRESS = """\
+{spinner} {status} |{bar}| {percentage:.1f}% | {current}/{total} | {speed}/s | ETA: {eta}
 """
 
 
@@ -153,31 +176,48 @@ def progress(current, total, message, type):
     if task_id not in progress.start_time:
         progress.start_time[task_id] = now
         
-    # Update every 1 second for smooth animation
-    if (now - last_time) > 1 or current == total:
+    # Update every 0.5 seconds for smoother animation
+    if (now - last_time) > 0.5 or current == total:
         try:
             percentage = current * 100 / total
-            speed = current / (now - progress.start_time[task_id])
+            speed = current / (now - progress.start_time[task_id]) if (now - progress.start_time[task_id]) > 0 else 0
             eta = (total - current) / speed if speed > 0 else 0
             elapsed = now - progress.start_time[task_id]
             
-            # Status emoji based on type
-            status_emoji = "📥 DOWNLOADING" if type == "down" else "📤 UPLOADING"
+            # Status emoji and text based on type
+            if type == "down":
+                status_emoji = "📥 DOWNLOAD"
+                status_color = "🔵"
+            else:
+                status_emoji = "📤 UPLOAD"
+                status_color = "🟢"
             
             # Get animated spinner frame (cycles through different animations)
-            frame_idx = int(now * 2) % len(LOADING_FRAMES)
+            frame_idx = int(now * 3) % len(LOADING_FRAMES)
             spinner = LOADING_FRAMES[frame_idx]
             
             # Progress Bar - 20 blocks with gradient effect
             filled_length = int(percentage / 5)  # 20 blocks for 100%
             bar = '█' * filled_length + '░' * (20 - filled_length)
             
-            # Animated progress indicator
+            # Animated progress indicator with color
             progress_anim = "░░░░░░░░░░"[int(percentage/10):] + "▓▓▓▓▓▓▓▓▓▓"[:int(percentage/10)]
             
-            status = PROGRESS_BAR_DASHBOARD.format(
+            # Dynamic status color based on progress
+            if percentage < 25:
+                status_color = "🔴"
+            elif percentage < 50:
+                status_color = "🟠"
+            elif percentage < 75:
+                status_color = "🟡"
+            else:
+                status_color = "🟢"
+            
+            status = f"{status_color} {status_emoji}"
+            
+            status_formatted = PROGRESS_BAR_DASHBOARD.format(
                 spinner=spinner,
-                status=status_emoji,
+                status=status,
                 bar=bar,
                 percentage=percentage,
                 current=humanbytes(current),
@@ -185,11 +225,12 @@ def progress(current, total, message, type):
                 speed=humanbytes(speed),
                 eta=TimeFormatter(eta * 1000),
                 elapsed=TimeFormatter(elapsed * 1000),
-                progress=progress_anim
+                progress=progress_anim,
+                task_id=task_id[:8]
             )
             
             with open(f'{message.id}{type}status.txt', "w", encoding='utf-8') as fileup:
-                fileup.write(status)
+                fileup.write(status_formatted)
                 
             progress.cache[task_id] = now
             
@@ -261,13 +302,55 @@ async def send_help(client: Client, message: Message):
     )
 
 # -------------------
+# Batch command handler
+# -------------------
+
+@Client.on_message(filters.command(["batch"]))
+async def batch_command(client: Client, message: Message):
+    """Handle /batch command to start batch processing"""
+    if not await db.is_user_exist(message.from_user.id):
+        await db.add_user(message.from_user.id, message.from_user.first_name)
+    
+    # Check if user is logged in
+    user_data = await db.get_session(message.from_user.id)
+    if user_data is None:
+        await message.reply_text(
+            "**__🚪 Please /login First To Use Batch Feature.__**",
+            parse_mode=enums.ParseMode.HTML
+        )
+        return
+    
+    # Check if batch is already running
+    if batch_temp.IS_BATCH.get(message.from_user.id) == False:
+        await message.reply_text(
+            "**__⚠️ One Batch Task Is Already Processing. Wait For Complete It.\nIf You Want To Cancel This Task Then Use - /cancel__**",
+            parse_mode=enums.ParseMode.HTML
+        )
+        return
+    
+    # Send instructions
+    await message.reply_text(
+        "**__📦 Batch Processing Ready!__**\n\n"
+        "**Send me a Telegram link with message range:**\n"
+        "• Public: `https://t.me/username/1-10`\n"
+        "• Private: `https://t.me/c/channel_id/1-10`\n"
+        "• Batch: `https://t.me/b/username/1-10`\n\n"
+        "**Example:** `https://t.me/c/123456789/1-100`\n"
+        "This will download messages 1 to 100 from the channel.",
+        parse_mode=enums.ParseMode.HTML
+    )
+
+# -------------------
 # Cancel command
 # -------------------
 
 @Client.on_message(filters.command(["cancel"]))
 async def send_cancel(client: Client, message: Message):
-    batch_temp.IS_BATCH[message.from_user.id] = True
-    await message.reply_text("❌ Batch Process Cancelled Successfully.")
+    if batch_temp.IS_BATCH.get(message.from_user.id) == False:
+        batch_temp.IS_BATCH[message.from_user.id] = True
+        await message.reply_text("❌ **Batch Process Cancelled Successfully.**", parse_mode=enums.ParseMode.HTML)
+    else:
+        await message.reply_text("**⚠️ No Active Batch Process To Cancel.**", parse_mode=enums.ParseMode.HTML)
 
 # -------------------
 # Handle incoming messages
@@ -276,11 +359,16 @@ async def send_cancel(client: Client, message: Message):
 @Client.on_message(filters.text & filters.private & ~filters.regex("^/"))
 async def save(client: Client, message: Message):
     if "https://t.me/" in message.text:
+        # Check if batch is already running
         if batch_temp.IS_BATCH.get(message.from_user.id) == False:
             return await message.reply_text(
-                "One Task Is Already Processing. Wait For Complete It. If You Want To Cancel This Task Then Use - /cancel"
+                "**__⚠️ One Task Is Already Processing. Wait For Complete It.\nIf You Want To Cancel This Task Then Use - /cancel__**",
+                parse_mode=enums.ParseMode.HTML
             )
-
+        
+        # Initialize batch flag
+        batch_temp.IS_BATCH[message.from_user.id] = False
+        
         datas = message.text.split("/")
         temp = datas[-1].replace("?single", "").split("-")
         fromID = int(temp[0].strip())
@@ -289,14 +377,36 @@ async def save(client: Client, message: Message):
         except:
             toID = fromID
 
-        batch_temp.IS_BATCH[message.from_user.id] = False
-
         is_private = "https://t.me/c/" in message.text
         is_batch = "https://t.me/b/" in message.text
-
+        
+        # Calculate total messages for progress
+        total_msgs = toID - fromID + 1
+        
+        # Send batch start confirmation
+        start_msg = await message.reply_text(
+            f"**__📦 Batch Processing Started__**\n"
+            f"**📋 Range:** {fromID} - {toID} ({total_msgs} messages)\n"
+            f"**🔄 Status:** Processing...",
+            parse_mode=enums.ParseMode.HTML
+        )
+        
         for msgid in range(fromID, toID + 1):
             if batch_temp.IS_BATCH.get(message.from_user.id):
                 break
+            
+            # Update progress message
+            current_num = msgid - fromID + 1
+            percentage = (current_num / total_msgs) * 100 if total_msgs > 0 else 0
+            try:
+                await start_msg.edit(
+                    f"**__📦 Batch Processing__**\n"
+                    f"**📋 Progress:** {current_num}/{total_msgs} ({percentage:.1f}%)\n"
+                    f"**🔄 Processing ID:** {msgid}",
+                    parse_mode=enums.ParseMode.HTML
+                )
+            except:
+                pass
             
             # 1. Try Public Copy (No Login Required)
             if not is_private and not is_batch:
@@ -313,8 +423,9 @@ async def save(client: Client, message: Message):
             # 2. Login Check
             user_data = await db.get_session(message.from_user.id)
             if user_data is None:
-                await message.reply("**__For Downloading Restricted Content You Have To /login First.__**")
+                await message.reply("**__🚪 For Downloading Restricted Content You Have To /login First.__**")
                 batch_temp.IS_BATCH[message.from_user.id] = True
+                await start_msg.edit("**__❌ Batch Stopped: Not Logged In__**", parse_mode=enums.ParseMode.HTML)
                 return
 
             # 3. Connect User Client
@@ -324,10 +435,14 @@ async def save(client: Client, message: Message):
             except (AuthKeyUnregistered, UserDeactivated, UserDeactivatedBan) as e:
                 batch_temp.IS_BATCH[message.from_user.id] = True
                 await db.set_session(message.from_user.id, None)
-                return await message.reply(f"**__Your Login Session Invalid/Expired. Please /login again.__**\nError: {e}")
+                await message.reply(f"**__🚪 Your Login Session Invalid/Expired. Please /login again.__**\nError: {e}")
+                await start_msg.edit("**__❌ Batch Stopped: Session Expired__**", parse_mode=enums.ParseMode.HTML)
+                return
             except Exception:
                 batch_temp.IS_BATCH[message.from_user.id] = True
-                return await message.reply("**__Your Login Session Error. So /logout First Then Login Again By - /login__**")
+                await message.reply("**__🚪 Your Login Session Error. So /logout First Then Login Again By - /login__**")
+                await start_msg.edit("**__❌ Batch Stopped: Session Error__**", parse_mode=enums.ParseMode.HTML)
+                return
 
             # 4. Handle Content
             if is_private:
@@ -358,9 +473,15 @@ async def save(client: Client, message: Message):
                     if ERROR_MESSAGE:
                          await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
 
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
 
         batch_temp.IS_BATCH[message.from_user.id] = True
+        
+        # Send completion message
+        if not batch_temp.IS_BATCH.get(message.from_user.id, True):
+            await start_msg.edit("**__✅ Batch Processing Completed Successfully!__**", parse_mode=enums.ParseMode.HTML)
+        else:
+            await start_msg.edit("**__ℹ️ Batch Processing Ended__**", parse_mode=enums.ParseMode.HTML)
 
 # -------------------
 # Handle private content
@@ -487,7 +608,7 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
         asyncio.create_task(upstatus(client, f'{message.id}upstatus.txt', smsg, chat))
     except Exception as e:
         logger.error(f"Error creating upload status task: {e}")
-    caption = msg.caption if msg.caption else None
+    caption = clean_caption(msg.caption) if msg.caption else None
     
     if batch_temp.IS_BATCH.get(message.from_user.id):
          # Cleanup if cancelled during gap
