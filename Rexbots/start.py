@@ -63,14 +63,25 @@ REACTIONS = [
     "🤓", "😎", "🏆", "🔥", "🤭", "🌚", "🆒", "👻", "😁"
 ]
 
-PROGRESS_BAR_DASHBOARD  = """\
-<blockquote>
-✦ <code>{bar}</code> • <b>{percentage:.1f}%</b><br>
-››  <b>Speed</b> • <code>{speed}/s</code><br>
-››  <b>Size</b> • <code>{current} / {total}</code><br>
-››  <b>ETA</b> • <code>{eta}</code><br>
-››  <b>Elapsed</b> • <code>{elapsed}</code>
-</blockquote>
+# Animated loading spinner frames
+LOADING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠃"]
+PULSE_FRAMES = ["▓", "▒", "░"]
+SPINNER_FRAMES = ["◐", "◓", "◑", "◒"]
+
+# Modern animated progress bar with complete details
+PROGRESS_BAR_DASHBOARD = """\
+╔══════════════════════════════════════════╗
+║  {spinner}  {status} Progress Dashboard   ║
+╠══════════════════════════════════════════╣
+║  {bar}                                   ║
+║  ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░  {percentage:.1f}%          ║
+╠══════════════════════════════════════════╣
+║  📁 Size:     {current} / {total}              ║
+║  ⚡ Speed:    {speed}/s                      ║
+║  ⏱️ ETA:      {eta}                        ║
+║  ⏰ Elapsed:  {elapsed}                     ║
+║  📶 Progress: {progress}                     ║
+╚══════════════════════════════════════════╝
 """
 
 
@@ -81,15 +92,20 @@ PROGRESS_BAR_DASHBOARD  = """\
 
 async def downstatus(client, statusfile, message, chat):
     while not os.path.exists(statusfile):
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
     while os.path.exists(statusfile):
         try:
             with open(statusfile, "r", encoding='utf-8') as downread:
                 txt = downread.read()
-            await client.edit_message_text(chat, message.id, f"📥 **Downloading...**\n\n{txt}")
-            await asyncio.sleep(10)
-        except:
+            await client.edit_message_text(
+                chat,
+                message.id,
+                f"╔══════════════════════════════╗\n║     📥 **DOWNLOADING**        ║\n╠══════════════════════════════╣\n{txt}",
+                parse_mode=enums.ParseMode.HTML
+            )
             await asyncio.sleep(5)
+        except:
+            await asyncio.sleep(3)
 
 # -------------------
 # Upload status
@@ -97,15 +113,20 @@ async def downstatus(client, statusfile, message, chat):
 
 async def upstatus(client, statusfile, message, chat):
     while not os.path.exists(statusfile):
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
     while os.path.exists(statusfile):
         try:
             with open(statusfile, "r", encoding='utf-8') as upread:
                 txt = upread.read()
-            await client.edit_message_text(chat, message.id, f"📤 **Uploading...**\n\n{txt}")
-            await asyncio.sleep(10)
-        except:
+            await client.edit_message_text(
+                chat,
+                message.id,
+                f"╔══════════════════════════════╗\n║     📤 **UPLOADING**          ║\n╠══════════════════════════════╣\n{txt}",
+                parse_mode=enums.ParseMode.HTML
+            )
             await asyncio.sleep(5)
+        except:
+            await asyncio.sleep(3)
 
 # -------------------
 # Progress writer
@@ -119,6 +140,8 @@ def progress(current, total, message, type):
     # Initialize cache if not exists
     if not hasattr(progress, "cache"):
         progress.cache = {}
+    if not hasattr(progress, "frame_index"):
+        progress.frame_index = 0
     
     now = time.time()
     task_id = f"{message.id}{type}"
@@ -130,26 +153,39 @@ def progress(current, total, message, type):
     if task_id not in progress.start_time:
         progress.start_time[task_id] = now
         
-    # Update only every 3 seconds or if completed
-    if (now - last_time) > 3 or current == total:
+    # Update every 1 second for smooth animation
+    if (now - last_time) > 1 or current == total:
         try:
             percentage = current * 100 / total
             speed = current / (now - progress.start_time[task_id])
             eta = (total - current) / speed if speed > 0 else 0
             elapsed = now - progress.start_time[task_id]
             
-            # Progress Bar
-            filled_length = int(percentage / 10) # 10 blocks for 100%
-            bar = '▰' * filled_length + '▱' * (10 - filled_length)
+            # Status emoji based on type
+            status_emoji = "📥 DOWNLOADING" if type == "down" else "📤 UPLOADING"
+            
+            # Get animated spinner frame (cycles through different animations)
+            frame_idx = int(now * 2) % len(LOADING_FRAMES)
+            spinner = LOADING_FRAMES[frame_idx]
+            
+            # Progress Bar - 20 blocks with gradient effect
+            filled_length = int(percentage / 5)  # 20 blocks for 100%
+            bar = '█' * filled_length + '░' * (20 - filled_length)
+            
+            # Animated progress indicator
+            progress_anim = "░░░░░░░░░░"[int(percentage/10):] + "▓▓▓▓▓▓▓▓▓▓"[:int(percentage/10)]
             
             status = PROGRESS_BAR_DASHBOARD.format(
+                spinner=spinner,
+                status=status_emoji,
                 bar=bar,
                 percentage=percentage,
                 current=humanbytes(current),
                 total=humanbytes(total),
                 speed=humanbytes(speed),
                 eta=TimeFormatter(eta * 1000),
-                elapsed=TimeFormatter(elapsed * 1000)
+                elapsed=TimeFormatter(elapsed * 1000),
+                progress=progress_anim
             )
             
             with open(f'{message.id}{type}status.txt', "w", encoding='utf-8') as fileup:
@@ -382,7 +418,12 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
                                           parse_mode=enums.ParseMode.HTML)
             return
 
-    smsg = await client.send_message(message.chat.id, '**__Downloading 🚀__**', reply_to_message_id=message.id)
+    smsg = await client.send_message(
+        message.chat.id,
+        '╔══════════════════════════════╗\n║     🚀 **PROCESSING**          ║\n╠══════════════════════════════╣\n║  Preparing your file...       ║\n║  Please wait...               ║\n╚══════════════════════════════╝',
+        reply_to_message_id=message.id,
+        parse_mode=enums.ParseMode.HTML
+    )
     
     # ----------------------------------------
     # Create unique temp directory for this task
@@ -623,7 +664,7 @@ async def button_callbacks(client: Client, callback_query):
             "• 📡 𝐔𝐩𝐝𝐚𝐭𝐞𝐬 : <a href='https://t.me/RexBots_Official'>𝐑𝐞𝐱𝐁𝐨𝐭𝐬 𝐎𝐟𝐟𝐢𝐜𝐢𝐚𝐥</a>\n"
             "• 🐍 𝐋𝐚𝐧𝐠𝐮𝐚𝐠𝐞 : <a href='https://www.python.org/'>𝐏𝐲𝐭𝐡𝐨𝐧 𝟑</a>\n"
             "• 📚 𝐋𝐢𝐛𝐫𝐚𝐫𝐲 : <a href='https://docs.pyrogram.org/'>𝐏𝐲𝐫𝐨𝐠𝐫𝐚𝐦</a>\n"
-            "• 🗄 𝐃𝐚𝐭𝐚𝐛𝐚𝐬𝐞 : <a href='https://www.mongodb.com/'>𝐌𝐨𝐧𝐠𝐨𝐃𝐁</a>\n"
+            "• 🗄 𝐃𝐚𝐭𝐚𝐛𝐚𝐬𝐞 : <a href='#'>𝐉𝐒𝐎𝐍 𝐅𝐢𝐥𝐞</a>\n"
             "• 📊 𝐕𝐞𝐫𝐬𝐢𝐨𝐧 : 𝟐.𝟎.𝟏 [𝐒𝐭𝐚𝐛𝐥𝐞]</i></b>"
         )
 
