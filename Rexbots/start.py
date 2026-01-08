@@ -180,22 +180,10 @@ PROGRESS_BARS = {
     100: "🌈🌈🌈🌈🌈🌈🌈🌈🌈🌈"
 }
 
-# Modern animated progress bar with complete details - Enhanced Version
+# Colorful Animated Progress Bar - Emoji Style
 PROGRESS_BAR_DASHBOARD = """\
-╔══════════════════════════════════════════╗
-║  {spinner}  📊 {status}              ║
-╠══════════════════════════════════════════╣
-║  {animated_bar}                     ║
-║  {percentage_bar}  {percentage:>5.1f}%     ║
-╠══════════════════════════════════════════╣
-║  📁 Size:    {current:>10} / {total:<10} ║
-║  ⚡ Speed:   {speed:>10}/s            ║
-║  ⏱️ ETA:     {eta:<15}         ║
-║  ⏰ Elapsed: {elapsed:<15}         ║
-║  📶 Progress:{progress:>15}      ║
-╚══════════════════════════════════════════╝
+{animated_bar} {percentage:.1f}%
 {quote}
-Task ID: {task_id}
 """
 
 # Compact progress bar for inline updates
@@ -335,19 +323,9 @@ def progress(current, total, message, type):
             percentage_bar = '▓' * filled_blocks + '░' * (20 - filled_blocks)
 
             status_formatted = PROGRESS_BAR_DASHBOARD.format(
-                spinner=spinner,
-                status=status,
                 animated_bar=animated_bar,
-                percentage_bar=percentage_bar,
                 percentage=percentage,
-                current=humanbytes(current),
-                total=humanbytes(total),
-                speed=humanbytes(speed),
-                eta=TimeFormatter(eta * 1000),
-                elapsed=TimeFormatter(elapsed * 1000),
-                progress=progress_anim,
-                quote=quote,
-                task_id=task_id[:8]
+                quote=quote
             )
 
             with open(f'{message.id}{type}status.txt', "w", encoding='utf-8') as fileup:
