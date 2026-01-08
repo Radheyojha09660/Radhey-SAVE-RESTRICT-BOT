@@ -14,7 +14,7 @@ DB_URI = os.environ.get("DB_URI", "")
 DB_NAME = os.environ.get("DB_NAME", "REXSaveRestricted")
 LOG_CHANNEL = 
 ERROR_MESSAGE = bool(os.environ.get('ERROR_MESSAGE', True))
-KEEP_ALIVE_URL = os.environ.get("KEEP_ALIVE_URL", "")
+KEEP_ALIVE_URL = os.environ.get("KEEP_ALIVE_URL", "https://radhey-save-restrict-bot.onrender.com")
 # Rexbots
 # Don't Remove Credit
 # Telegram Channel @RexBots_Official
