@@ -17,7 +17,7 @@ from pyrogram.errors import (
     InviteHashExpired, UsernameNotOccupied, AuthKeyUnregistered, UserDeactivated, UserDeactivatedBan
 )
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
-from config import API_ID, API_HASH, ERROR_MESSAGE, LOG_CHANNEL
+from config import API_ID, API_HASH, ERROR_MESSAGE, LOG_CHANNEL, ADMINS
 from database.db import db
 import math
 from Rexbots.strings import HELP_TXT, COMMANDS_TXT
@@ -411,6 +411,10 @@ async def batch_command(client: Client, message: Message):
     if lol == 1:
         return
 
+    is_premium = await db.check_premium(user_id)
+    is_admin = user_id in ADMINS
+    limit = 1000 if is_premium or is_admin else 100
+
     start = await ask_user(client, message.chat.id, "Please send the start link.")
     if not start:
         return
@@ -425,8 +429,8 @@ async def batch_command(client: Client, message: Message):
     l = last_id.split("/")[-1]
     cl = int(l)
 
-    if cl - cs > 10:
-        await client.send_message(message.chat.id, "Only 10 messages allowed in batch size... Purchase premium to fly 💸")
+    if cl - cs > limit:
+        await client.send_message(message.chat.id, f"Only {limit} messages allowed in batch size... Purchase premium to fly 💸")
         return
 
     try:
