@@ -551,6 +551,7 @@ async def process_single_link(client, userbot, sender, edit_id, msg_link, messag
             if userbot:
                 msg = await userbot.get_messages(chat, msg_id)
                 if msg.service or msg.empty:
+                    await msg.edit_text("Message not found or empty.")
                     return
 
                 if msg.media and msg.media == MessageMediaType.WEB_PAGE:
@@ -575,8 +576,15 @@ async def process_single_link(client, userbot, sender, edit_id, msg_link, messag
                 # Process file and upload
                 await process_and_upload(client, userbot, sender, edit_id, msg, file, message)
 
-        except Exception as e:
-            await client.edit_message_text(sender, edit_id, f'Failed to save: `{msg_link}`\n\nError: {str(e)}')
+            else:
+                # No userbot - for private channels, tell user to login
+                if 't.me/c/' in msg_link:
+                    await client.edit_message_text(sender, edit_id, "**🔒 This is a private channel link.**\n\nPlease /login first to download restricted content.")
+                    return
+                # For public/batch channels, try direct copy
+                chat = msg_link.split("/")[-2]
+                await copy_message_public(client, sender, chat, msg_id, message)
+                await client.delete_messages(sender, edit_id)
 
     else:
         # Public channel - try direct copy first
