@@ -398,6 +398,9 @@ async def send_help(client: Client, message: Message):
 # Batch command handler
 # -------------------
 
+# Store batch conversation state
+batch_conversations = {}
+
 @Client.on_message(filters.private & filters.command(["batch"]))
 async def batch_command(client: Client, message: Message):
     user_id = message.chat.id
@@ -405,101 +408,142 @@ async def batch_command(client: Client, message: Message):
     if lol == 1:
         return
 
-    is_premium = await db.check_premium(user_id)
-    is_admin = user_id in ADMINS
-    limit = 1000 if is_premium or is_admin else 100
+    # Initialize batch conversation
+    batch_conversations[user_id] = {
+        "step": "waiting_for_start_link",
+        "start_link": None,
+        "end_link": None
+    }
+    
+    await client.send_message(message.chat.id, "📋 Please send the start link.")
 
-    start = await ask_user(client, message.chat.id, "Please send the start link.")
-    if not start:
-        return
-    start_id = start.text
-    s = start_id.split("/")[-1]
-    cs = int(s)
+@Client.on_message(filters.private & filters.text & ~filters.regex("^/"))
+async def handle_batch_conversation(client: Client, message: Message):
+    user_id = message.chat.id
+    
+    # Check if user is in batch conversation
+    if user_id in batch_conversations:
+        conversation = batch_conversations[user_id]
+        text = message.text.strip()
+        
+        if conversation["step"] == "waiting_for_start_link":
+            if "https://t.me/" in text:
+                conversation["start_link"] = text
+                conversation["step"] = "waiting_for_end_link"
+                await client.send_message(message.chat.id, "📋 Please send the end link.")
+            else:
+                await client.send_message(message.chat.id, "❌ Please send a valid Telegram link starting with https://t.me/")
+                
+        elif conversation["step"] == "waiting_for_end_link":
+            if "https://t.me/" in text:
+                conversation["end_link"] = text
+                
+                # Process the batch
+                is_premium = await db.check_premium(user_id)
+                is_admin = user_id in ADMINS
+                limit = 1000 if is_premium or is_admin else 100
+                
+                start_id = conversation["start_link"]
+                last_id = conversation["end_link"]
+                
+                s = start_id.split("/")[-1]
+                l = last_id.split("/")[-1]
+                
+                try:
+                    cs = int(s)
+                    cl = int(l)
+                except ValueError:
+                    await client.send_message(message.chat.id, "❌ Invalid message IDs in links. Please send valid links.")
+                    del batch_conversations[user_id]
+                    return
 
-    last = await ask_user(client, message.chat.id, "Please send the end link.")
-    if not last:
-        return
-    last_id = last.text
-    l = last_id.split("/")[-1]
-    cl = int(l)
+                if cl - cs > limit:
+                    await client.send_message(message.chat.id, f"Only {limit} messages allowed in batch size... Purchase premium to fly 💸")
+                    del batch_conversations[user_id]
+                    return
 
-    if cl - cs > limit:
-        await client.send_message(message.chat.id, f"Only {limit} messages allowed in batch size... Purchase premium to fly 💸")
-        return
+                # Clean up conversation state
+                del batch_conversations[user_id]
+                
+                try:
+                    user_data = await db.get_session(user_id)
 
-    try:
-        user_data = await db.get_session(user_id)
+                    if user_data:
+                        session = user_data
+                        try:
+                            userbot = Client(":userbot:", api_id=API_ID, api_hash=API_HASH, session_string=session)
+                            await userbot.start()
+                        except:
+                            return await client.send_message(message.chat.id, "Your login expired ... /login again")
+                    else:
+                        await client.send_message(message.chat.id, "Login in bot first ...")
+                        return
 
-        if user_data:
-            session = user_data
-            try:
-                userbot = Client(":userbot:", api_id=API_ID, api_hash=API_HASH, session_string=session)
-                await userbot.start()
-            except:
-                return await client.send_message(message.chat.id, "Your login expired ... /login again")
-        else:
-            await client.send_message(message.chat.id, "Login in bot first ...")
-
-        try:
-            users_loop[user_id] = True
-
-            for i in range(int(s), int(l)):
-                if user_id in users_loop and users_loop[user_id]:
-                    msg = await client.send_message(message.chat.id, "🔄 Processing message...")
                     try:
-                        x = start_id.split('/')
-                        y = x[:-1]
-                        result = '/'.join(y)
-                        url = f"{result}/{i}"
-                        link = get_link(url)
-                        
-                        # Show actual download/upload progress
-                        await client.edit_message_text(message.chat.id, msg.id, "📥 Downloading message...")
-                        await handle_private(client, userbot, message, get_chat_id_from_link(link), get_msg_id_from_link(link))
-                        
-                        # Add delay to avoid floodwait
-                        if i % 5 == 0:  # Only sleep every 5 messages to reduce delay
-                            sleep_msg = await client.send_message(message.chat.id, "⏳ Sleeping for 3 seconds to avoid flood...")
-                            await asyncio.sleep(3)
-                            await sleep_msg.delete()
-                    except Exception as e:
-                        print(f"Error processing link {url}: {e}")
-                        await client.edit_message_text(message.chat.id, msg.id, f"❌ Error: {str(e)}")
-                        continue
-                else:
-                    break
-        except Exception as e:
-            await client.send_message(message.chat.id, f"Error: {str(e)}")
+                        users_loop[user_id] = True
 
-    except FloodWait as fw:
-        wait_time = min(fw.x, 300)  # Cap wait time at 5 minutes to avoid excessive delays
-        await client.send_message(message.chat.id, f'⏳ FloodWait detected! Waiting {wait_time} seconds before continuing...')
-        await asyncio.sleep(wait_time)
-        # Retry the operation after wait
-        try:
-            for i in range(int(s), int(l)):
-                if user_id in users_loop and users_loop[user_id]:
-                    msg = await client.send_message(message.chat.id, "🔄 Retrying after FloodWait...")
-                    try:
-                        x = start_id.split('/')
-                        y = x[:-1]
-                        result = '/'.join(y)
-                        url = f"{result}/{i}"
-                        link = get_link(url)
-                        await handle_private(client, userbot, message, get_chat_id_from_link(link), get_msg_id_from_link(link))
-                        if i % 5 == 0:
-                            sleep_msg = await client.send_message(message.chat.id, "⏳ Sleeping for 3 seconds...")
-                            await asyncio.sleep(3)
-                            await sleep_msg.delete()
+                        for i in range(int(s), int(l)):
+                            if user_id in users_loop and users_loop[user_id]:
+                                msg = await client.send_message(message.chat.id, "🔄 Processing message...")
+                                try:
+                                    x = start_id.split('/')
+                                    y = x[:-1]
+                                    result = '/'.join(y)
+                                    url = f"{result}/{i}"
+                                    link = get_link(url)
+                                    
+                                    # Show actual download/upload progress
+                                    await client.edit_message_text(message.chat.id, msg.id, "📥 Downloading message...")
+                                    await handle_private(client, userbot, message, get_chat_id_from_link(link), get_msg_id_from_link(link))
+                                    
+                                    # Add delay to avoid floodwait
+                                    if i % 5 == 0:  # Only sleep every 5 messages to reduce delay
+                                        sleep_msg = await client.send_message(message.chat.id, "⏳ Sleeping for 3 seconds to avoid flood...")
+                                        await asyncio.sleep(3)
+                                        await sleep_msg.delete()
+                                except Exception as e:
+                                    print(f"Error processing link {url}: {e}")
+                                    await client.edit_message_text(message.chat.id, msg.id, f"❌ Error: {str(e)}")
+                                    continue
+                            else:
+                                break
                     except Exception as e:
-                        print(f"Error processing link {url}: {e}")
-                        continue
-                else:
-                    break
-        except Exception as e:
-            await client.send_message(message.chat.id, f'❌ Error during retry: {str(e)}')
-    except Exception as e:
-        await client.send_message(message.chat.id, f"Error: {str(e)}")
+                        await client.send_message(message.chat.id, f"Error: {str(e)}")
+
+                    except FloodWait as fw:
+                        wait_time = min(fw.x, 300)  # Cap wait time at 5 minutes to avoid excessive delays
+                        await client.send_message(message.chat.id, f'⏳ FloodWait detected! Waiting {wait_time} seconds before continuing...')
+                        await asyncio.sleep(wait_time)
+                        # Retry the operation after wait
+                        try:
+                            for i in range(int(s), int(l)):
+                                if user_id in users_loop and users_loop[user_id]:
+                                    msg = await client.send_message(message.chat.id, "🔄 Retrying after FloodWait...")
+                                    try:
+                                        x = start_id.split('/')
+                                        y = x[:-1]
+                                        result = '/'.join(y)
+                                        url = f"{result}/{i}"
+                                        link = get_link(url)
+                                        await handle_private(client, userbot, message, get_chat_id_from_link(link), get_msg_id_from_link(link))
+                                        if i % 5 == 0:
+                                            sleep_msg = await client.send_message(message.chat.id, "⏳ Sleeping for 3 seconds...")
+                                            await asyncio.sleep(3)
+                                            await sleep_msg.delete()
+                                    except Exception as e:
+                                        print(f"Error processing link {url}: {e}")
+                                        continue
+                                else:
+                                    break
+                        except Exception as e:
+                            await client.send_message(message.chat.id, f'❌ Error during retry: {str(e)}')
+                    except Exception as e:
+                        await client.send_message(message.chat.id, f"Error: {str(e)}")
+
+                except Exception as e:
+                    await client.send_message(message.chat.id, f"❌ Error starting batch process: {str(e)}")
+            else:
+                await client.send_message(message.chat.id, "❌ Please send a valid Telegram link starting with https://t.me/")
 
 # -------------------
 # Cancel command
