@@ -457,10 +457,25 @@ async def handle_batch_conversation(client: Client, message: Message):
                     del batch_conversations[user_id]
                     return
 
-                if cl - cs > limit:
+                # Check if range is valid (at least 1 message)
+                if cl < cs:
+                    await client.send_message(message.chat.id, "❌ End message ID must be greater than start message ID.")
+                    del batch_conversations[user_id]
+                    return
+                
+                if cl == cs:
+                    # Single message case
+                    message_count = 1
+                else:
+                    message_count = cl - cs + 1
+
+                if message_count > limit:
                     await client.send_message(message.chat.id, f"Only {limit} messages allowed in batch size... Purchase premium to fly 💸")
                     del batch_conversations[user_id]
                     return
+                
+                # Send confirmation before starting
+                await client.send_message(message.chat.id, f"✅ Starting batch processing for {message_count} message(s)...")
 
                 # Clean up conversation state
                 del batch_conversations[user_id]
@@ -482,33 +497,40 @@ async def handle_batch_conversation(client: Client, message: Message):
                     try:
                         users_loop[user_id] = True
 
-                        for i in range(int(s), int(l)):
+                        # Handle single message case or range
+                        start_msg_id = int(s)
+                        end_msg_id = int(l)
+                        
+                        for current_msg_id in range(start_msg_id, end_msg_id + 1):
                             if user_id in users_loop and users_loop[user_id]:
-                                msg = await client.send_message(message.chat.id, "🔄 Processing message...")
+                                msg = await client.send_message(message.chat.id, f"🔄 Processing message {current_msg_id}...")
                                 try:
                                     x = start_id.split('/')
                                     y = x[:-1]
                                     result = '/'.join(y)
-                                    url = f"{result}/{i}"
+                                    url = f"{result}/{current_msg_id}"
                                     link = get_link(url)
                                     
                                     # Show actual download/upload progress
-                                    await client.edit_message_text(message.chat.id, msg.id, "📥 Downloading message...")
+                                    await client.edit_message_text(message.chat.id, msg.id, f"📥 Downloading message {current_msg_id}...")
                                     await handle_private(client, userbot, message, get_chat_id_from_link(link), get_msg_id_from_link(link))
                                     
-                                    # Add delay to avoid floodwait
-                                    if i % 5 == 0:  # Only sleep every 5 messages to reduce delay
+                                    # Add delay to avoid floodwait (only every 5 messages)
+                                    if (current_msg_id - start_msg_id) % 5 == 0 and current_msg_id != end_msg_id:
                                         sleep_msg = await client.send_message(message.chat.id, "⏳ Sleeping for 3 seconds to avoid flood...")
                                         await asyncio.sleep(3)
                                         await sleep_msg.delete()
                                 except Exception as e:
                                     print(f"Error processing link {url}: {e}")
-                                    await client.edit_message_text(message.chat.id, msg.id, f"❌ Error: {str(e)}")
+                                    await client.edit_message_text(message.chat.id, msg.id, f"❌ Error processing message {current_msg_id}: {str(e)}")
                                     continue
                             else:
                                 break
+                        
+                        # Send completion message
+                        await client.send_message(message.chat.id, f"✅ Batch processing completed! Processed {end_msg_id - start_msg_id + 1} message(s).")
                     except Exception as e:
-                        await client.send_message(message.chat.id, f"Error: {str(e)}")
+                        await client.send_message(message.chat.id, f"❌ Error in batch processing: {str(e)}")
 
                     except FloodWait as fw:
                         wait_time = min(fw.x, 300)  # Cap wait time at 5 minutes to avoid excessive delays
